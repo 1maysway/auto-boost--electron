@@ -1,0 +1,24 @@
+os: osx
+language: node_js
+node_js:
+  - 18.12.1
+
+before_install:
+  - npm install -g electron-builder
+
+install:
+  - npm install
+
+script:
+  - electron-builder -m
+
+branches:
+  only:
+    - main
+
+cache:
+  directories:
+    - node_modules
+
+notifications:
+  email: false
