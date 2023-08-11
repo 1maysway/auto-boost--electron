@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, Notification, shell } = require("electron");
 const path = require("path");
 const puppeteer = require("puppeteer");
 const chromium = require("chromium");
@@ -14,6 +14,9 @@ const {
     writeFile,
     readFile,
     getTimeZone,
+    shuffleArray,
+    checkProxyType,
+    padZero,
 } = require("./utils.js");
 const ProxyChain = require("proxy-chain");
 const fs = require("fs");
@@ -79,18 +82,18 @@ if (require("electron-squirrel-startup")) {
 //     });
 // }
 
+const logs = {};
+
 const getBoostInfo = async() => {
     console.log("GETTING BOOST INFO");
-
-    // const token = readFile(
-    //     path.join(app.getPath("userData"), "auth.txt")
-    // );
-
-    // if (!token) throw new Error("No auth.")
 
     const res = await axios.post(
         Options.variables.SERVER_BASE_URL + "api/public/getBoostInfo", {}
     );
+
+    // res.data.data.info.currentBoost.startsIn = -1000;
+    // res.data.data.info.currentBoost.endsIn = 10000;
+    // res.data.data.info.nextBoost.startsIn = 11000;
 
     return {
         info: res.data.data,
@@ -131,6 +134,32 @@ const getUsers = async(init = false) => {
         return {...(await pv), [cvid]: obj };
     }, Promise.resolve({}));
 };
+
+const getConsole = (profileId) => ({
+    ...console,
+    error: (e) => {
+        const date = new Date();
+        const newLog = {
+            type: "error",
+            content: e.stack,
+            time: `${padZero(date.getHours())}:${padZero(date.getMinutes())}:${padZero(date.getSeconds())}`
+        }
+        if (!logs[profileId]) logs[profileId] = [newLog];
+        else logs[profileId].push(newLog);
+        console.error(e);
+    },
+    log: (...args) => {
+        const date = new Date();
+        const newLog = {
+            type: "log",
+            content: args.join(', '),
+            time: `${padZero(date.getHours())}:${padZero(date.getMinutes())}:${padZero(date.getSeconds())}`
+        }
+        if (!logs[profileId]) logs[profileId] = [newLog];
+        else logs[profileId].push(newLog);
+        console.log(...args);
+    }
+});
 
 const state_obj = {
     status: "loading",
@@ -229,12 +258,14 @@ const updateBoostInfo = async() => {
         console.log(res.info.info);
 
         if (res.info.info.currentBoost.startsIn > 0) {
-            setTimeout(updateBoostInfo, res.info.info.currentBoost.startsIn * 1000);
+            setTimeout(updateBoostInfo, (res.info.info.currentBoost.startsIn - 20) * 1000);
+        } else if (res.info.info.currentBoost.endsIn > 0) {
+            setTimeout(updateBoostInfo, (res.info.info.currentBoost.endsIn - 20) * 1000);
         } else {
-            setTimeout(updateBoostInfo, (res.info.info.nextBoost.endsIn + 10) * 1000);
+            setTimeout(updateBoostInfo, (res.info.info.nextBoost.startsIn - 20) * 1000);
         }
 
-        if (!res.info.info.currentBoost.completed) {
+        if (!res.info.info.currentBoost.complete) {
             setTimeout(() => {
                 state.boostInfo.info.info.currentBoost.complete = true;
                 Object.entries(flows).forEach(async([k, v]) => {
@@ -261,7 +292,7 @@ const updateBoostInfo = async() => {
         }
 
         Object.entries(state.users_state.users).forEach(([k, v]) => {
-            if (v.profileState.boostId !== res.id) {
+            if (v.profileState.boostId !== res.info.info.currentBoost.id) {
                 state.users_state.users[k].profileState.boostId =
                     res.info.info.currentBoost.id;
                 state.users_state.users[k].profileState.completedVideos = [];
@@ -273,11 +304,13 @@ const updateBoostInfo = async() => {
     } catch (error) {
         console.error(error);
 
+        state.status = "default";
+
         mainWindow && mainWindow.webContents.send("goLogin", {});
     }
 };
 
-const initBrowserNpage = async(launchOptions = {}, browserArgs = []) => {
+const initBrowserNpage = async(launchOptions = {}, browserArgs = [], auth = null, console) => {
     const browser = await puppeteer.launch({
         executablePath: chromium.path,
         headless: false, //Options.puppeteer.headless,
@@ -288,6 +321,7 @@ const initBrowserNpage = async(launchOptions = {}, browserArgs = []) => {
         },
         slowMo: Options.puppeteer.slowMo,
         protocolTimeout: 400000,
+        ignoreDefaultArgs: ['--enable-automation'],
         // devtools: true
         ...launchOptions,
     });
@@ -295,22 +329,46 @@ const initBrowserNpage = async(launchOptions = {}, browserArgs = []) => {
     // const browserWSEndpoint = browser.wsEndpoint();
     // browser.disconnect();
 
-    await (await browser.pages())[0].close();
+    const initPage = (await browser.pages())[0];
 
-    const page = await browser.newPage();
-    page.goto;
-    await page.evaluateOnNewDocument(() => {
+    auth && await initPage.authenticate(auth);
+
+    auth && await initPage
+        .goto("https://www.google.com/", { timeout: 9999999 })
+        .catch(async(e) => {
+            console.error(e);
+
+            mainWindow.webContents.send("error", e);
+
+            await browser.close();
+
+            throw new Error("Bad connection")
+        });
+
+    // await initPage.goto("about:blank");
+
+    // await initPage.close();
+
+    // await new Promise(r => setTimeout(r, 100000));
+
+    // const page = await browser.newPage();
+    // auth && await page.authenticate(auth);
+
+    // await initPage.close();
+
+    // page.goto;
+    await initPage.evaluateOnNewDocument(() => {
         const newProto = navigator.__proto__;
         delete newProto.webdriver;
         navigator.__proto__ = newProto;
     });
-    await page.setUserAgent(Options.puppeteer.userAgent);
+    // await initPage.setUserAgent(Options.puppeteer.userAgent);
 
     // page.goto("https://www.youtube.com/", {
     //     timeout: 9999999,
     // });
 
-    return [browser, page];
+    return [browser, initPage];
 };
 
 async function startProxyServer(proxy, port) {
@@ -367,6 +425,8 @@ const boost = async(profileId) => {
 
     if (!flow) return;
 
+    const console = getConsole(profileId);
+
     const { browser, page, proxyServer } = flow;
 
     /////////////////////////////
@@ -394,13 +454,21 @@ const boost = async(profileId) => {
 
     const inputSearch = async(query) => {
         try {
-            await waitSelector("input#search");
+            const isSearchInput = await waitSelector("input#search");
+
+            if (!isSearchInput) return false;
 
             const inputValue = await page.$eval("input#search", (el) => el.value);
-            await page.click("input#search");
-            for (let i = 0; i < inputValue.length; i++) {
-                await page.keyboard.press("Backspace");
-            }
+            await page.focus("input#search");
+
+            // for (let i = 0; i < inputValue.length; i++) {
+            //     await page.keyboard.press("Backspace");
+            // }
+
+            await page.keyboard.down('Shift');
+            await page.keyboard.press('ArrowUp', { shift: true });
+            await page.keyboard.up('Shift');
+            await page.keyboard.press("Backspace");
 
             await page.type("input#search", query);
         } catch (error) {
@@ -423,38 +491,79 @@ const boost = async(profileId) => {
 
         const filters = Object.entries(filters_obj);
 
-        for (const [key, value] of filters) {
-            const filters_group_index = filters_indexes[key];
+        const doFilters = async() => {
+            for (const [key, value] of filters) {
+                const filters_group_index = filters_indexes[key];
 
-            for (let i = 0; i < value.length; i++) {
-                const isFilterMenu = await waitSelector("#filter-menu button", 5000);
-                if (!isFilterMenu) {
-                    return;
-                }
-                await page.click("#filter-menu button");
+                for (let i = 0; i < value.length; i++) {
+                    const isFilterMenu = await waitSelector("#filter-button button", 5000);
+                    if (!isFilterMenu) {
+                        return false;
+                    }
 
-                await waitSelector('iron-collapse[aria-hidden="false"]', 3000, false);
+                    try {
+                        await page.click("#filter-button button")
+                    } catch (error) {
+                        console.error(error);
+                        return false;
+                    }
 
-                const clickFilter = await page
-                    .evaluate(
-                        async(props) => {
-                            try {
-                                const { filters_group_index, value, i } = props;
+                    await waitSelector('tp-yt-paper-dialog:not([aria-hidden])', 3000, false);
 
-                                function clickOnElementCenter(element) {
-                                    const { left, top, width, height } =
-                                    element.getBoundingClientRect();
-                                    const x = left + width / 2;
-                                    const y = top + height / 2;
-                                    const event = new MouseEvent("click", {
-                                        view: window,
-                                        bubbles: true,
-                                        cancelable: true,
-                                        clientX: x,
-                                        clientY: y,
-                                    });
-                                    element.dispatchEvent(event);
+                    const clickFilter = await page
+                        .evaluate(
+                            async(props) => {
+                                try {
+                                    const { filters_group_index, value, i } = props;
+
+                                    function clickOnElementCenter(element) {
+                                        const { left, top, width, height } =
+                                        element.getBoundingClientRect();
+                                        const x = left + width / 2;
+                                        const y = top + height / 2;
+                                        const event = new MouseEvent("click", {
+                                            view: window,
+                                            bubbles: true,
+                                            cancelable: true,
+                                            clientX: x,
+                                            clientY: y,
+                                        });
+                                        element.dispatchEvent(event);
+                                    }
+
+                                    const filters_groups = document.querySelectorAll(
+                                        "ytd-search-filter-group-renderer"
+                                    );
+
+                                    const filter_button = filters_groups[
+                                        filters_group_index
+                                    ].querySelectorAll("ytd-search-filter-renderer #endpoint")[
+                                        value[i]
+                                    ];
+
+                                    clickOnElementCenter(filter_button);
+
+                                    return true;
+                                } catch (error) {
+                                    console.error(error);
+                                    return false;
                                 }
+                            }, { filters_group_index, value, i }
+                        )
+                        .then((res) => res)
+                        .catch((e) => {
+                            console.error(e);
+                            return null;
+                        });
+
+                    if (!clickFilter) {
+                        return false;
+                    }
+
+                    await page
+                        .waitForFunction(
+                            (props) => {
+                                const { filters_group_index, value, i } = props;
 
                                 const filters_groups = document.querySelectorAll(
                                     "ytd-search-filter-group-renderer"
@@ -466,47 +575,25 @@ const boost = async(profileId) => {
                                     value[i]
                                 ];
 
-                                clickOnElementCenter(filter_button);
-
-                                return true;
-                            } catch (error) {
-                                console.error(error);
-                                return false;
-                            }
-                        }, { filters_group_index, value, i }
-                    )
-                    .then((res) => res)
-                    .catch((e) => {
-                        console.error(e);
-                        return null;
-                    });
-
-                if (!clickFilter) {
-                    return false;
+                                return filter_button.ariaSelected === "true";
+                            }, { polling: Options.puppeteer.polling, timeout: 1000 }, { filters_group_index, value, i }
+                        )
+                        .catch(() => {});
                 }
-
-                await page
-                    .waitForFunction(
-                        (props) => {
-                            const { filters_group_index, value, i } = props;
-
-                            const filters_groups = document.querySelectorAll(
-                                "ytd-search-filter-group-renderer"
-                            );
-
-                            const filter_button = filters_groups[
-                                filters_group_index
-                            ].querySelectorAll("ytd-search-filter-renderer #endpoint")[
-                                value[i]
-                            ];
-
-                            return filter_button.ariaSelected === "true";
-                        }, { polling: Options.puppeteer.polling, timeout: 1000 }, { filters_group_index, value, i }
-                    )
-                    .catch(() => {});
             }
+            return true;
         }
-        return true;
+
+        const df = await doFilters();
+
+        try {
+            if (await waitSelector('tp-yt-paper-dialog:not([aria-hidden])', 500, true, false)) {
+                await page.click("#filter-button button");
+            }
+        } catch (error) {
+            console.error(error);
+        }
+        return df;
     };
 
     const scrollToBottom = async() => {
@@ -598,6 +685,8 @@ const boost = async(profileId) => {
             (Options.viewingLengthRange[1] - Options.viewingLengthRange[0]) +
             Options.viewingLengthRange[0];
 
+        console.log("FACTOR", viewingLengthFactor);
+
         await page
             .waitForFunction(
                 (factor) => {
@@ -621,6 +710,7 @@ const boost = async(profileId) => {
                 viewingLengthFactor
             )
             .catch(console.error);
+        console.log(await page.evaluate(() => (window.location.href)).catch(() => null));
         console.log("VIDEO HAS ENDED");
     };
 
@@ -645,6 +735,16 @@ const boost = async(profileId) => {
             });
         return videoLoaded;
     };
+
+    const isLoggedIn = async() => {
+        return await page.evaluate(() => {
+            try {
+                return window.ytcfg.d().LOGGED_IN;
+            } catch (error) {
+                return false;
+            }
+        });
+    }
 
     const isAD = async() => {
         const adSelector = ".video-ads.ytp-ad-module";
@@ -776,6 +876,10 @@ const boost = async(profileId) => {
     const watchVideo = async() => {
         const videoLoaded = await isVideoLoaded();
 
+        if (!videoLoaded) return;
+
+        await new Promise(r => setTimeout(r, 3000));
+
         await checkForPause();
 
         const actions = await videoActions();
@@ -801,23 +905,39 @@ const boost = async(profileId) => {
         }
     };
 
+    const isCaptcha = () => {
+        return page.url().includes("google.com/sorry")
+    }
+
     /////////////////////////////
 
     await page
         .goto("https://www.youtube.com/", {
             waitUntil: "load",
-            timeout: 10000,
+            timeout: 60000,
         })
         .catch(() => {});
 
-    const videos = state_obj.boostInfo.info.videos.filter(
+    const videos = shuffleArray(state_obj.boostInfo.info.videos.filter(
         (v) =>
-        !state_obj.users_state.users[profileId].profileState.completedVideos.find(
-            (cv) => cv.id === v.id
+        !state_obj.users_state.users[profileId].profileState.completedVideos.some(
+            (cv) => cv.video_id === v.id
         )
-    );
+    ));
+
+    const loggedIn = await isLoggedIn();
+
+    if (!loggedIn) {
+        throw new Error("Not logged in");
+    }
 
     for (let i = 0; i < videos.length; i++) {
+        if (isCaptcha()) {
+            state.users_state.users[profileId].profileState.captcha = true;
+            updateUserState(profileId);
+            throw new Error("YouTube Captcha")
+        }
+
         const video = videos[i];
 
         const result = {
@@ -828,12 +948,35 @@ const boost = async(profileId) => {
 
         const doBoost = async() => {
             console.log("DO BOOST");
+
+            const isSearchInput = await waitSelector("input#search");
+            const href = await page.evaluate(() => (window.location.href))
+
+            if (!isSearchInput && href !== "https://www.youtube.com/") {
+                await page
+                    .goto("https://www.youtube.com/", {
+                        waitUntil: "load",
+                        timeout: 10000,
+                    })
+                    .catch(() => {});
+                if (isCaptcha()) {
+                    state.users_state.users[profileId].profileState.captcha = true;
+                    updateUserState(profileId);
+                    throw new Error("YouTube Captcha")
+                }
+            } else if (!isSearchInput && href === "https://www.youtube.com/") {
+                throw new Error("Unexpected error while trying to find video")
+            }
+
             const typed = await inputSearch(video.query);
 
             if (!typed) {
+                result.completeReason = "error";
                 throw new Error("Could not make search");
             }
 
+            await page.keyboard.press("Enter");
+            await page.keyboard.press("Enter");
             await page.keyboard.press("Enter");
 
             await waitSelector("ytd-video-renderer", 4000, true);
@@ -844,21 +987,9 @@ const boost = async(profileId) => {
 
             const videoBtns = await findVideo(video.ytvideo_id);
 
-            console.log(videoBtns);
+            console.log("Video Bts", videoBtns);
 
-            if (videoBtns && videoBtns.length > 0) {
-                result.foundVideo = true;
-                for (let i = 0; i < videoBtns.length; i++) {
-                    const btn = videoBtns[i];
-                    try {
-                        await btn.click();
-                        i = videoBtns.length;
-                    } catch (error) {
-                        console.error(error);
-                    }
-                }
-            } else {
-                result.foundVideo = false;
+            const gotoVideo = async() => {
                 await page
                     .goto("https://www.youtube.com/watch?v=" + video.ytvideo_id, {
                         waitUntil: "load",
@@ -867,44 +998,76 @@ const boost = async(profileId) => {
                     .catch(() => {});
             }
 
+            if (videoBtns && videoBtns.length > 0) {
+                result.foundVideo = true;
+                let ok = false;
+                for (let i = 0; i < videoBtns.length; i++) {
+                    const btn = videoBtns[i];
+                    console.log(btn);
+                    try {
+                        await btn.click();
+                        i = videoBtns.length;
+                        ok = true;
+                    } catch (error) {
+                        console.error(error);
+                    }
+                }
+                if (!ok) {
+                    result.foundVideo = false;
+                    await gotoVideo();
+                }
+            } else {
+                result.foundVideo = false;
+                await gotoVideo();
+            }
+
             await watchVideo();
 
             result.completeReason = "complete";
         };
 
-        try {
-            await doBoost();
-        } catch (error) {
-            console.error(error);
+        // try {
+        await doBoost();
+        // } catch (error) {
+        //     console.error(error);
 
-            result.completeReason = "error";
-        }
+        //     result.completeReason = "error";
+        // }
 
         await new Promise((r) => setTimeout(r, 1000));
 
         try {
             if (await browser.isConnected()) {
-                const completedVideos =
-                    state_obj.users_state.users[profileId].profileState.completedVideos;
-                state.users_state.users[profileId].profileState.completedVideos = [
-                    ...completedVideos,
-                    result,
-                ];
-                updateUserState(profileId);
-
                 await axios.post(Options.variables.SERVER_BASE_URL + "api/public/addView", {
                     data: {
                         view: {
                             video_id: result.video_id,
-                            reason: result.completeReason,
-                            foundVideo: result.foundVideo,
+                            reason: (result.completeReason || "complete") + "_" + browser.process().pid,
+                            foundVideo: result.foundVideo || false,
                             proxy: state_obj.users_state.users[profileId].profileState.options.proxy || null
                         }
                     }
-                })
+                });
+
+                const completedVideos =
+                    state_obj.users_state.users[profileId].profileState.completedVideos;
+                state.users_state.users[profileId].profileState.completedVideos = [
+                    ...completedVideos,
+                    {
+                        ...result,
+                        reason: (result.completeReason || "complete") + "_" + browser.process().pid,
+                        foundVideo: result.foundVideo || false,
+                    },
+                ];
+
+                updateUserState(profileId);
+            } else {
+                return;
             }
         } catch (error) {
-            console.error();
+            console.error(error);
+
+            throw new Error("Could not send view report");
         }
     }
 };
@@ -916,46 +1079,48 @@ const ipcMain_Routes = {
         for (let i = 0; i < profilesIds.length; i++) {
             const profileId = profilesIds[i];
 
+            const console = getConsole(profileId);
+
             try {
-                if (!state_obj.users_state.users[profileId]) continue;
-
-                state.users_state.users[profileId].profileState.status = "loading";
-                state.users_state.users[profileId].profileState.busy = "boost";
-                updateUserState(profileId);
-
-                let proxy =
-                    state.users_state.users[profileId].profileState.options.proxy;
-                const port = Options.proxyStartPort + profileId;
+                if (!state_obj.users_state.users[profileId] || flows[profileId]) continue;
 
                 flows[profileId] = {
                     profileId,
                     status: "init",
                 };
 
+                state.users_state.users[profileId].profileState.status = "loading";
+                state.users_state.users[profileId].profileState.busy = "boost";
+                updateUserState(profileId);
+
+                let proxy =
+                    state_obj.users_state.users[profileId].profileState.options.proxy;
+                // const port = Options.proxyStartPort + profileId;                
+
                 try {
-                    proxy && await proxy_check(proxy);
+                    // proxy && await proxy_check(proxy);
                 } catch (error) {
                     console.error(error);
 
-                    reject(new Error("Invalid proxy."));
+                    throw new Error("Invalid proxy.");
                 }
 
                 // const proxyServer = proxy ? await startProxyServer(proxy, port) : null;
 
+                const logPass = proxy ? proxy.split("@")[0].split(":") : null;
+                const auth = logPass && { username: logPass[0], password: logPass[1] };
                 const [browser, page] = await initBrowserNpage({
                         userDataDir: path.join(
                             app.getPath("userData"),
                             "users/user_" + profileId
                         ),
-                        headless: true,
+                        headless: false,
                     },
-                    proxy ? [`--proxy-server=${((proxy.startsWith("http://") || proxy.startsWith("https://")) ? "" : "http://")+proxy.split("@")[1]}`] : []
+                    proxy ? [`--proxy-server=${proxy.split("@")[1]}`] : [],
                     // proxyServer ? [`--proxy-server=http://localhost:` + port] : []
+                    auth,
+                    console
                 );
-
-                const logPass = proxy ? proxy.startsWith("http://") ? proxy.split("@")[0].split("//")[1].split(":") : proxy.split("@")[0].split(":") : null;
-
-                logPass && await page.authenticate({ username: logPass[0], password: logPass[1] });
 
                 if (flows[profileId].destroy) {
                     try {
@@ -989,7 +1154,7 @@ const ipcMain_Routes = {
 
                 browser.on("disconnected", async function(event) {
                     try {
-                        proxyServer && (await proxyServer.close(true).catch(console.error));
+                        // proxyServer && (await proxyServer.close(true).catch(console.error));
                         delete flows[profileId];
                     } catch (error) {
                         console.error(error);
@@ -1014,6 +1179,14 @@ const ipcMain_Routes = {
                                             ") " +
                                             e.toString(),
                                     });
+
+                                    const notification = new Notification({
+                                        title: "One Tap",
+                                        body: e.toString(),
+                                        icon: __dirname + "/resources/images/oneTap_logo.png"
+                                    });
+
+                                    notification.show();
                                 }
                                 r();
                             }, 1000)
@@ -1024,8 +1197,8 @@ const ipcMain_Routes = {
 
                         try {
                             await browser.close();
-                            proxyServer &&
-                                (await proxyServer.close(true).catch(console.error));
+                            // proxyServer &&
+                            //     (await proxyServer.close(true).catch(console.error));
                         } catch (error) {
                             console.error(error);
                         }
@@ -1092,7 +1265,7 @@ const ipcMain_Routes = {
 
                 delete flows[profileId];
 
-                proxyServer && (await proxyServer.close(true).catch(console.error));
+                // proxyServer && (await proxyServer.close(true).catch(console.error));
 
                 state.users_state.users[profileId].profileState.status = "default";
             } catch (error) {
@@ -1174,9 +1347,11 @@ const ipcMain_Routes = {
         }
     },
     browserProfile: async(event, data = {}) => {
-        const { profileId = 2 } = data;
+        const { profileId } = data;
 
         if (!state_obj.users_state.users[profileId]) return;
+
+        const console = getConsole(profileId);
 
         state.users_state.users[profileId].profileState.status = "loading";
         state.users_state.status = "loading";
@@ -1189,14 +1364,18 @@ const ipcMain_Routes = {
             const port = Options.proxyStartPort + profileId;
 
             try {
-                proxy && await proxy_check(proxy);
+                // proxy && await proxy_check(proxy);
             } catch (error) {
                 console.error(error);
 
-                reject(new Error("Invalid proxy."));
+                throw new Error("Invalid proxy.");
             }
 
             // const proxyServer = proxy ? await startProxyServer(proxy, port) : null;
+
+            const logPass = proxy ? proxy.split("@")[0].split(":") : null;
+
+            const auth = logPass && { username: logPass[0], password: logPass[1] };
 
             const [browser, page] = await initBrowserNpage({
                     userDataDir: path.join(
@@ -1205,25 +1384,21 @@ const ipcMain_Routes = {
                     ),
                     headless: false,
                 },
-                proxy ? [`--proxy-server=${((proxy.startsWith("http://") || proxy.startsWith("https://")) ? "" : "http://")+proxy.split("@")[1]}`] : []
+                proxy ? [`--proxy-server=${proxy.split("@")[1]}`] : [],
                 // proxyServer ? [`--proxy-server=http://localhost:` + port] : []
+                auth,
+                console
             );
-
-            const logPass = proxy ? proxy.startsWith("http://") ? proxy.split("@")[0].split("//")[1].split(":") : proxy.split("@")[0].split(":") : null;
-
-            logPass && await page.authenticate({ username: logPass[0], password: logPass[1] });
 
             state.users_state.users[profileId].profileState.status = "default";
             state.users_state.status = "default";
             updateUserState(profileId);
 
             browser.on("disconnected", async function(event) {
-                // console.log(event.type());
-                // if (event.type() === "page") {
-                // console.log("Tab Close");
-
                 try {
                     // proxyServer && (await proxyServer.close(true).catch(console.error));
+                    state.users_state.users[profileId].profileState.captcha = false;
+                    updateUserState(profileId);
                 } catch (error) {
                     console.error(error);
                 }
@@ -1231,7 +1406,6 @@ const ipcMain_Routes = {
                 state.users_state.users[profileId].profileState.busy = "none";
                 state.users_state.status = "default";
                 updateUserState(profileId);
-                // }
             });
 
             await page
@@ -1280,15 +1454,67 @@ const ipcMain_Routes = {
         writeFile(path.join(app.getPath("userData"), `auth.txt`), data.data.token);
         axios.defaults.headers["x-access-token"] = data.data.token;
 
+        await new Promise(r => setTimeout(r, 1000));
+
         await updateBoostInfo();
+
+        await new Promise(r => setTimeout(r, 1000));
 
         mainWindow.webContents.send("goMain", {});
     },
+    saveLogs: async(event, data = {}) => {
+        const { profileId } = data;
+
+        if (!logs[profileId]) {
+            mainWindow.webContents.send("pushNotification", {
+                content: "Nothing to save",
+                type: "warning"
+            });
+            return;
+        }
+
+        const text = logs[profileId].map((log, index) => `${index + 1} ${log.time} [${log.type}] : ${log.content}`).join('\n\n');
+
+        dialog.showSaveDialog({
+            title: 'Save Logs',
+            defaultPath: path.join(__dirname, `profile_${profileId}_logs.txt`),
+            filters: [{ name: 'Text Files', extensions: ['txt'] }]
+        }).then(result => {
+            if (!result.canceled) {
+                const filePath = result.filePath;
+                fs.writeFile(filePath, text, err => {
+                    if (err) {
+                        console.error('Error saving file:', err);
+
+                        mainWindow.webContents.send("pushNotification", {
+                            content: "Could not save logs",
+                            type: "error"
+                        });
+                    } else {
+                        console.log('File saved successfully:', filePath);
+
+                        mainWindow.webContents.send("pushNotification", {
+                            content: "Logs saved successfuly",
+                            type: "success"
+                        });
+                    }
+                });
+            }
+        }).catch(err => {
+            console.error('Error in dialog:', err);
+            mainWindow.webContents.send("pushNotification", {
+                content: "Could not save logs",
+                type: "error"
+            });
+        });
+    }
 };
 
 const ipcMain_Handles = {
     createBrowserProfile: async(event, data = {}) => {
         const { name = null, proxy = null } = data.data;
+
+        mainWindow.webContents.send("log", data.data);
 
         if (state_obj.users_state.users.length >= Options.app.maxUsers)
             return {
@@ -1297,11 +1523,21 @@ const ipcMain_Handles = {
             };
 
         if (proxy) {
+            const proxyValid = checkProxyType(proxy)
             try {
-                const proxyCheck = await proxy_check(proxy);
-                console.log(proxyCheck);
+                if (proxyValid) {
+                    // const proxyCheck = await proxy_check(proxy);
+                    // console.log(proxyCheck);
+                } else {
+                    return {
+                        ok: false,
+                        message: "Неверный формат прокси.",
+                    };
+                }
             } catch (error) {
                 console.error(error);
+
+                mainWindow.webContents.send("error", error);
 
                 return {
                     ok: false,
@@ -1329,6 +1565,7 @@ const ipcMain_Handles = {
                 status: "default",
                 busy: "none",
                 boostId: state.boostInfo.info.info.currentBoost.id || null,
+                captcha: false
             };
 
             writeFile(
@@ -1356,12 +1593,24 @@ const ipcMain_Handles = {
         const { profileId = 2 } = data;
         const { name, proxy } = data.data;
 
+        mainWindow.webContents.send("log", data.data);
+
         if (proxy) {
+            const proxyValid = checkProxyType(proxy)
             try {
-                const proxyCheck = await proxy_check(proxy);
-                console.log(proxyCheck);
+                if (proxyValid) {
+                    // const proxyCheck = await proxy_check(proxy);
+                    // console.log(proxyCheck);
+                } else {
+                    return {
+                        ok: false,
+                        message: "Неверный формат прокси.",
+                    };
+                }
             } catch (error) {
                 console.error(error);
+
+                mainWindow.webContents.send("error", error);
 
                 return {
                     ok: false,
@@ -1432,10 +1681,10 @@ const createWindow = () => {
     mainWindow.maximize();
     mainWindow.show();
 
-    // mainWindow.setMenuBarVisibility(false);
-    // mainWindow.loadFile(path.join(__dirname, 'build/index.html'));
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.loadFile(path.join(__dirname, 'build/index.html'));
 
-    mainWindow.loadURL("http://localhost:3000");
+    // mainWindow.loadURL("http://localhost:3000");
 
     // mainWindow.webContents.openDevTools();
 
@@ -1446,6 +1695,8 @@ const createWindow = () => {
     Object.entries(ipcMain_Handles).forEach(([route, handler]) =>
         ipcMain.handle(route, handler)
     );
+
+    // shell.showItemInFolder(app.getPath("userData"));
 };
 
 app.on("ready", () => {

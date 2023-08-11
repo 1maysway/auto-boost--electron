@@ -1,7 +1,7 @@
 {
     "name": "auto-boost",
     "productName": "Auto Boost",
-    "version": "1.0.0",
+    "version": "1.0.8",
     "description": "My Electron application description",
     "main": "src/index.js",
     "scripts": {
@@ -11,7 +11,8 @@
         "publish": "electron-forge publish",
         "lint": "echo \"No linting configured\"",
         "pack": "electron-builder --dir",
-        "dist": "electron-builder"
+        "dist": "electron-builder",
+        "dist-all": "electron-builder -mw"
     },
     "keywords": [],
     "author": {
@@ -70,7 +71,7 @@
         "win": {
             "asar": false,
             "target": "nsis",
-            "icon": "resources/images/oneTap_logo.ico"
+            "icon": "resources/images/oneTap_logo.png"
         }
     }
 }

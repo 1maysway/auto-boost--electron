@@ -101,10 +101,11 @@ function readFile(filePath) {
     }
 }
 
+function padZero(num) {
+    return num < 10 ? `0${num}` : num;
+}
+
 function getTimeZone() {
-    function padZero(num) {
-        return num < 10 ? `0${num}` : num;
-    }
 
     const currentDate = new Date();
     const timezoneOffsetMinutes = currentDate.getTimezoneOffset();
@@ -126,6 +127,15 @@ const axiosClient = axios.create({
     },
 });
 
+const shuffleArray = (array) => {
+    return array.sort(() => Math.random() - 0.5);
+}
+
+function checkProxyType(proxy) {
+    const pattern = /^[a-zA-Z0-9]+:[a-zA-Z0-9]+@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/;
+    return pattern.test(proxy);
+}
+
 module.exports = {
     generateId,
     getFolderContents,
@@ -136,4 +146,7 @@ module.exports = {
     readFile,
     getTimeZone,
     axiosClient,
+    shuffleArray,
+    checkProxyType,
+    padZero,
 };

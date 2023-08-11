@@ -4,7 +4,6 @@
         "headless": false,
         "browserArgs": [
             "--enable-features=NetworkService",
-            "--disable-web-security",
             "--start-maximized",
             "--no-sandbox",
             "--disable-dev-shm-usage",
@@ -25,9 +24,10 @@
             "--enable-low-res-tiling",
             "--max-old-space-size=512",
             "--cpu-limit=1",
-            "--window-size=1920,1080"
+            "--window-size=1920,1080",
+            "--disable-blink-features=AutomationControlled"
         ],
-        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.5672.93 Safari/537.36",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5672.93 Safari/537.36",
         "slowMo": 0
     },
     "app": {
@@ -46,7 +46,7 @@
                 "oneTime": true,
                 "from": 80,
                 "to": 140,
-                "chance": 0.3,
+                "chance": 0.05,
                 "data": {
                     "comments": [
                         "The beat is a living, breathing force that moves me",
@@ -176,7 +176,7 @@
         }
     },
     "variables": {
-        "SERVER_BASE_URL": "https://auto-boost-maysway.amvera.io/"
+        "SERVER_BASE_URL": "https://one-tap-satisfari.amvera.io/"
     },
     "proxyStartPort": 9000,
     "viewingLengthRange": [0.57, 1],
