@@ -1,8 +1,8 @@
 {
     "name": "auto-boost",
     "productName": "Auto Boost",
-    "version": "1.0.8",
-    "description": "My Electron application description",
+    "version": "1.0.9",
+    "description": "One Tap Boost",
     "main": "src/index.js",
     "scripts": {
         "start": "electron-forge start",
@@ -12,7 +12,8 @@
         "lint": "echo \"No linting configured\"",
         "pack": "electron-builder --dir",
         "dist": "electron-builder",
-        "dist-all": "electron-builder -mw"
+        "dist-all": "electron-builder -mw",
+        "dist-mac": "electron-builder -m"
     },
     "keywords": [],
     "author": {
@@ -41,13 +42,15 @@
         "@electron-forge/maker-zip": "^6.2.1",
         "@electron-forge/plugin-auto-unpack-natives": "^6.2.1",
         "electron": "25.2.0",
-        "electron-builder": "^24.4.0"
+        "electron-builder": "^24.4.0",
+        "electron-packager": "^17.1.1"
     },
     "build": {
         "appId": "com.auto-boost.app",
         "includeSubNodeModules": "true",
         "productName": "One Tap",
         "icon": "resources/images/oneTap_logo.ico",
+        "asarUnpack": true,
         "directories": {
             "output": "output",
             "buildResources": "resources"
@@ -72,6 +75,9 @@
             "asar": false,
             "target": "nsis",
             "icon": "resources/images/oneTap_logo.png"
+        },
+        "mac": {
+            "asar": false
         }
     }
 }

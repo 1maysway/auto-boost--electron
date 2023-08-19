@@ -1114,7 +1114,7 @@ const ipcMain_Routes = {
                             app.getPath("userData"),
                             "users/user_" + profileId
                         ),
-                        headless: false,
+                        headless: true,
                     },
                     proxy ? [`--proxy-server=${proxy.split("@")[1]}`] : [],
                     // proxyServer ? [`--proxy-server=http://localhost:` + port] : []
