@@ -132,7 +132,7 @@ const shuffleArray = (array) => {
 }
 
 function checkProxyType(proxy) {
-    const pattern = /^[a-zA-Z0-9]+:[a-zA-Z0-9]+@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/;
+    const pattern = /^.+:.+@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/;
     return pattern.test(proxy);
 }
 
