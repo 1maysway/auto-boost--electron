@@ -77,7 +77,12 @@
             "icon": "resources/images/oneTap_logo.png"
         },
         "mac": {
-            "asar": false
+            "asar": false,
+            "category": "public.app-category.developer-tools"
+        },
+        "dmg": {
+            "artifactName": "auto-boost",
+            "title": "${productName} ${version}"
         }
     }
 }

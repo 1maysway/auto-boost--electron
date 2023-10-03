@@ -705,7 +705,7 @@ const boost = async(profileId) => {
                     );
                 }, {
                     timeout: 240000,
-                    polling: Options.puppeteer.polling,
+                    polling: 3000 //Options.puppeteer.polling,
                 },
                 viewingLengthFactor
             )
