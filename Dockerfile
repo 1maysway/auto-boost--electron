@@ -24,7 +24,7 @@ RUN apt-get install -y nodejs
 
 # Build your application or perform other necessary steps
 RUN npm install
-# RUN npm run build
+# RUN npm run builddd
 
 # Specify the command to run when the container starts
 CMD ["npm", "run", "dist-all"]
